@@ -1,0 +1,60 @@
+version: "3.9"
+
+# Run:  docker compose up -d
+# This starts PostgreSQL with the pgvector extension pre-installed.
+# The backend and frontend can run locally (see README) or inside Docker.
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: aethergraph_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: aethergraph
+    ports:
+      - "5432:5432"
+    volumes:
+      - aethergraph_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d aethergraph"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: aethergraph_backend
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:password@postgres:5432/aethergraph
+      SYNC_DATABASE_URL: postgresql://postgres:password@postgres:5432/aethergraph
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: aethergraph_frontend
+    restart: unless-stopped
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+
+volumes:
+  aethergraph_pgdata:
+    driver: local
