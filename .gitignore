@@ -1,0 +1,20 @@
+# Environment variables
+.env
+.env.local
+
+# Python virtual environment & cache
+.venv/
+__pycache__/
+*.pyc
+
+# Node dependencies & Next.js build output
+node_modules/
+.next/
+out/
+tsconfig.tsbuildinfo
+
+# IDE/Tooling folders
+.claude/
+.gemini/
+.idea/
+.vscode/
