@@ -10,6 +10,7 @@ type Document = {
   status: string;
   node_count: number;
   uploaded_at: string;
+  color?: string;
 };
 
 type DocumentManagerProps = {
@@ -171,7 +172,15 @@ export default function DocumentManager({
               >
                 <div className="flex items-start justify-between mb-2">
                   <div className="flex-1 min-w-0">
-                    <h3 className="text-sm font-medium text-white truncate">{doc.filename}</h3>
+                    <div className="flex items-center gap-2">
+                      {doc.color && (
+                        <div
+                          className="w-2.5 h-2.5 rounded-full flex-shrink-0"
+                          style={{ backgroundColor: doc.color, boxShadow: `0 0 6px ${doc.color}` }}
+                        />
+                      )}
+                      <h3 className="text-sm font-medium text-white truncate">{doc.filename}</h3>
+                    </div>
                     <div className="flex items-center gap-2 mt-1">
                       <span className="text-[10px] text-white/40">{formatFileSize(doc.file_size)}</span>
                       <span className="text-white/20">•</span>

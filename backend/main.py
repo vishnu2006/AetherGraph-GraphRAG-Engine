@@ -32,6 +32,7 @@ import json as _json
 import os
 import secrets
 from pathlib import Path
+import random
 
 from dotenv import load_dotenv
 
@@ -179,6 +180,7 @@ _COLUMN_MIGRATIONS = [
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_active TIMESTAMP",
     "ALTER TABLE graph_nodes ADD COLUMN IF NOT EXISTS document_id UUID",
     "ALTER TABLE graph_nodes ALTER COLUMN embedding TYPE vector(768)",
+    "ALTER TABLE uploaded_documents ADD COLUMN IF NOT EXISTS color VARCHAR(50)",
 ]
 
 
@@ -307,6 +309,7 @@ class NodeOut(BaseModel):
     position_x: float
     position_y: float
     document_id: Optional[str] = None
+    color: Optional[str] = None
 
     model_config = {"from_attributes": True}
 
@@ -452,6 +455,7 @@ class DocumentOut(BaseModel):
     file_type: str
     status: str
     node_count: int
+    color: Optional[str] = None
     uploaded_at: datetime
 
     model_config = {"from_attributes": True}
@@ -604,6 +608,8 @@ def _ingest_file(file_content: bytes, filename: str, workspace_id: str, doc_id: 
             doc = db.query(UploadedDocument).filter(UploadedDocument.id == uuid.UUID(doc_id)).first()
             if not doc:
                 file_ext = filename.split(".")[-1].lower() if "." in filename else "unknown"
+                tail_colors = ["#ef4444", "#f97316", "#f59e0b", "#84cc16", "#22c55e", "#06b6d4", "#3b82f6", "#6366f1", "#a855f7", "#ec4899", "#f43f5e"]
+                doc_color = random.choice(tail_colors)
                 doc = UploadedDocument(
                     id=uuid.UUID(doc_id),
                     workspace_id=uuid.UUID(workspace_id),
@@ -612,6 +618,7 @@ def _ingest_file(file_content: bytes, filename: str, workspace_id: str, doc_id: 
                     file_type=file_ext,
                     status="processing",
                     node_count=0,
+                    color=doc_color,
                 )
                 db.add(doc)
                 db.commit()
@@ -625,6 +632,7 @@ def _ingest_file(file_content: bytes, filename: str, workspace_id: str, doc_id: 
             if start_y > 0:
                 start_y += 350.0
 
+            actual_nodes = 0
             # Create nodes
             for i, chunk in enumerate(chunks):
                 try:
@@ -638,32 +646,18 @@ def _ingest_file(file_content: bytes, filename: str, workspace_id: str, doc_id: 
                 title = " ".join(words[:5]).title()
                 label = f"{title}..." if title else f"{filename} part {i+1}"
 
-                new_node_id = uuid.uuid4()
-                db.add(
-                    GraphNode(
-                        id=new_node_id,
-                        workspace_id=uuid.UUID(workspace_id),
-                        document_id=uuid.UUID(doc_id),
-                        label=label,
-                        content=chunk,
-                        node_type="document",
-                        embedding=embedding_vector,
-                        unlocked=True,
-                        position_x=float((i % 8) * 340),
-                        position_y=start_y + float((i // 8) * 220),
-                    )
-                )
+                is_duplicate = False
+                closest_node = None
 
-                # Similarity check & Cross-document linking
+                # Similarity check BEFORE creating node
                 if embedding_vector:
                     try:
                         vec_literal = "[" + ",".join(f"{v:.8f}" for v in embedding_vector) + "]"
                         closest_node_row = db.execute(
                             text("""
-                                SELECT id, label, 1 - (embedding <=> cast(:vec AS vector)) AS similarity
+                                SELECT id, label, content, 1 - (embedding <=> cast(:vec AS vector)) AS similarity
                                 FROM graph_nodes
                                 WHERE workspace_id = cast(:wid AS uuid)
-                                  AND id != :nid
                                   AND embedding IS NOT NULL
                                 ORDER BY embedding <=> cast(:vec AS vector)
                                 LIMIT 1
@@ -671,31 +665,64 @@ def _ingest_file(file_content: bytes, filename: str, workspace_id: str, doc_id: 
                             {
                                 "vec": vec_literal,
                                 "wid": workspace_id,
-                                "nid": str(new_node_id)
                             }
                         ).first()
 
-                        if closest_node_row and closest_node_row.similarity > 0.85:
-                            # Create cross-document connection edge
-                            db.add(
-                                GraphEdge(
-                                    id=uuid.uuid4(),
-                                    workspace_id=uuid.UUID(workspace_id),
-                                    source_node_id=uuid.UUID(str(closest_node_row.id)),
-                                    target_node_id=new_node_id,
-                                    relationship_label="similar_to",
-                                    weight=float(closest_node_row.similarity)
+                        if closest_node_row:
+                            if closest_node_row.similarity > 0.92:
+                                is_duplicate = True
+                                # Append provenance to existing node
+                                db.execute(
+                                    text("""
+                                        UPDATE graph_nodes 
+                                        SET content = content || '\n\n[Also appears in Document: ' || :doc_id || ']'
+                                        WHERE id = :nid
+                                    """),
+                                    {"doc_id": filename, "nid": closest_node_row.id}
                                 )
-                            )
-                            print(f"[Pocket Dump] Linked node {new_node_id} to existing node {closest_node_row.id} (similarity: {closest_node_row.similarity:.4f})")
+                                print(f"[Pocket Dump] Skipped chunk (duplicate similarity {closest_node_row.similarity:.4f}). Appended to {closest_node_row.id}")
+                            elif closest_node_row.similarity > 0.82:
+                                closest_node = closest_node_row
                     except Exception as sim_err:
                         print(f"[Pocket Dump] Similarity check failed: {sim_err}")
+
+                if not is_duplicate:
+                    new_node_id = uuid.uuid4()
+                    db.add(
+                        GraphNode(
+                            id=new_node_id,
+                            workspace_id=uuid.UUID(workspace_id),
+                            document_id=uuid.UUID(doc_id),
+                            label=label,
+                            content=chunk,
+                            node_type="document",
+                            embedding=embedding_vector,
+                            unlocked=True,
+                            position_x=float((i % 8) * 340),
+                            position_y=start_y + float((i // 8) * 220),
+                        )
+                    )
+                    actual_nodes += 1
+
+                    if closest_node:
+                        # Create cross-document connection edge
+                        db.add(
+                            GraphEdge(
+                                id=uuid.uuid4(),
+                                workspace_id=uuid.UUID(workspace_id),
+                                source_node_id=uuid.UUID(str(closest_node.id)),
+                                target_node_id=new_node_id,
+                                relationship_label="Highly Related",
+                                weight=float(closest_node.similarity)
+                            )
+                        )
+                        print(f"[Pocket Dump] Linked node {new_node_id} to existing node {closest_node.id} (similarity: {closest_node.similarity:.4f})")
 
                 time.sleep(0.12)   # respect 1,500 RPM free-tier ceiling
 
             # Update document status and node count
             doc.status = "completed"
-            doc.node_count = total
+            doc.node_count = actual_nodes
             
             # Retrieve room_code for WebSocket broadcast before committing
             ws_room = db.query(WorkspaceRoom).filter(WorkspaceRoom.id == uuid.UUID(workspace_id)).first()
@@ -1612,7 +1639,8 @@ async def create_node(payload: NodeCreate, db: AsyncSession = Depends(get_db)):
 @app.get("/api/nodes/{workspace_id}", response_model=List[NodeOut])
 async def list_nodes(workspace_id: str, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
-        select(GraphNode)
+        select(GraphNode, UploadedDocument.color)
+        .outerjoin(UploadedDocument, GraphNode.document_id == UploadedDocument.id)
         .where(GraphNode.workspace_id == uuid.UUID(workspace_id))
         .order_by(GraphNode.created_at)
     )
@@ -1621,9 +1649,10 @@ async def list_nodes(workspace_id: str, db: AsyncSession = Depends(get_db)):
             id=str(n.id), label=n.label, content=n.content,
             node_type=n.node_type, unlocked=n.unlocked,
             position_x=n.position_x, position_y=n.position_y,
-            document_id=str(n.document_id) if n.document_id else None
+            document_id=str(n.document_id) if n.document_id else None,
+            color=color
         )
-        for n in result.scalars().all()
+        for n, color in result.all()
     ]
 
 
