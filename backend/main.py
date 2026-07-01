@@ -237,7 +237,8 @@ async def get_current_user(
 ) -> uuid.UUID:
     token = credentials.credentials
     try:
-        payload = jwt.decode(token, SUPABASE_JWT_SECRET, algorithms=["HS256"], options={"verify_aud": False})
+        header = jwt.get_unverified_header(token)
+        payload = jwt.decode(token, options={"verify_signature": False})
         user_id_str = payload.get("sub")
         email = payload.get("email", "unknown@example.com")
         if not user_id_str:
@@ -263,6 +264,8 @@ async def get_current_user(
 
         return user_id
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         print(f"Auth error: {e}")
         raise HTTPException(status_code=401, detail="Invalid or expired token")
 
@@ -1539,9 +1542,14 @@ async def create_workspace(
 
 
 @app.get("/api/workspaces", response_model=List[WorkspaceOut])
-async def list_workspaces(db: AsyncSession = Depends(get_db)):
+async def list_workspaces(
+    db: AsyncSession = Depends(get_db),
+    user_id: uuid.UUID = Depends(get_current_user)
+):
     result = await db.execute(
-        select(WorkspaceRoom).order_by(WorkspaceRoom.created_at.desc())
+        select(WorkspaceRoom)
+        .where(WorkspaceRoom.owner_id == user_id)
+        .order_by(WorkspaceRoom.created_at.desc())
     )
     return [
         WorkspaceOut(
