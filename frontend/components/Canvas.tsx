@@ -108,8 +108,6 @@ function getDocColors(docId?: string) {
 function ConceptNode({ id, data, selected }: NodeProps<ConceptNodeData>) {
   const [expanded, setExpanded] = useState(false);
 
-  const [expanded, setExpanded] = useState(false);
-
   let borderColor, glowColor, dotClass, badgeClass;
   if (data.node_type === "document" && data.document_id) {
     const docColor = getDocColors(data.document_id);
