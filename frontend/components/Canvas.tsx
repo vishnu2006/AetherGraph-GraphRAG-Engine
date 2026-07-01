@@ -87,6 +87,9 @@ const TYPE_BADGE: Record<string, string> = {
   document:   "text-cyan-400/75 bg-cyan-500/10 border-cyan-500/20",
   summary:    "text-blue-400/75 bg-blue-500/10 border-blue-500/20",
   question:   "text-amber-400/75 bg-amber-500/10 border-amber-500/20",
+  definition: "text-emerald-400/75 bg-emerald-500/10 border-emerald-500/20",
+};
+
 // ─── Custom node component ────────────────────────────────────────────────────
 
 function ConceptNode({ id, data, selected }: NodeProps<ConceptNodeData>) {
