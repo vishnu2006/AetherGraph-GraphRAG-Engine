@@ -79,7 +79,7 @@ export default function GamificationWidget({
     setLoading(true);
     try {
       const [userRes, boardRes] = await Promise.all([
-        fetch(`${apiBase}/api/users/${DEFAULT_USER_ID}`),
+        fetch(`${apiBase}/api/users/me`),
         fetch(`${apiBase}/api/leaderboard?limit=5`),
       ]);
       if (userRes.ok) setMe(await userRes.json());
