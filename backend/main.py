@@ -94,15 +94,39 @@ GEMINI_CHAT_MODEL: str = os.getenv("GEMINI_CHAT_MODEL", "gemini-2.5-flash")
 SUPABASE_JWT_SECRET: str = os.getenv("SUPABASE_JWT_SECRET", "placeholder")
 security = HTTPBearer()
 
-async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> uuid.UUID:
+async def get_current_user(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: AsyncSession = Depends(get_db)
+) -> uuid.UUID:
     token = credentials.credentials
     try:
         payload = jwt.decode(token, SUPABASE_JWT_SECRET, algorithms=["HS256"], options={"verify_aud": False})
         user_id_str = payload.get("sub")
+        email = payload.get("email", "unknown@example.com")
         if not user_id_str:
             raise HTTPException(status_code=401, detail="Invalid token")
-        return uuid.UUID(user_id_str)
-    except Exception:
+        
+        user_id = uuid.UUID(user_id_str)
+        
+        # Sync logic
+        result = await db.execute(select(User).where(User.id == user_id))
+        user = result.scalar_one_or_none()
+        if not user:
+            new_user = User(
+                id=user_id,
+                email=email,
+                username=email.split("@")[0],
+                hashed_password="oauth",
+                xp=0,
+                level=1,
+                streak_days=0
+            )
+            db.add(new_user)
+            await db.commit()
+
+        return user_id
+    except Exception as e:
+        print(f"Auth error: {e}")
         raise HTTPException(status_code=401, detail="Invalid or expired token")
 
 # ─────────────────────────────────────────────────────────────────────────────
