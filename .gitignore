@@ -18,3 +18,6 @@ tsconfig.tsbuildinfo
 .gemini/
 .idea/
 .vscode/
+gh.zip
+gh_cli/
+dummy.txt
