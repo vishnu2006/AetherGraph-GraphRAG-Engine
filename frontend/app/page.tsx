@@ -1,12 +1,29 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { createClient } from "@/utils/supabase/client";
 
 export default function LandingPage() {
   const [accessCode, setAccessCode] = useState("");
+  const [user, setUser] = useState<any>(null);
   const router = useRouter();
+  const supabase = createClient();
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setUser(session?.user ?? null);
+    });
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null);
+    });
+    return () => subscription.unsubscribe();
+  }, [supabase]);
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+  };
 
   const handleJoin = (e: React.FormEvent) => {
     e.preventDefault();
@@ -16,16 +33,63 @@ export default function LandingPage() {
   };
 
   return (
-    <div className="min-h-screen bg-[#0a0a0a] relative overflow-hidden">
+    <div className="min-h-screen bg-[#0a0a0a] relative overflow-hidden flex flex-col">
+      {/* Top Navigation */}
+      <header className="relative z-20 w-full px-6 py-4 flex items-center justify-between border-b border-white/5 bg-black/20 backdrop-blur-md">
+        <div className="flex items-center gap-2">
+          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-violet-500 to-cyan-500 flex items-center justify-center text-xs font-black shadow-[0_0_16px_rgba(139,92,246,0.4)]">
+            A
+          </div>
+          <span className="text-sm font-bold tracking-[0.15em] text-white/80 uppercase">
+            AetherGraph
+          </span>
+        </div>
+        
+        <div className="flex items-center gap-4">
+          {user ? (
+            <>
+              <span className="text-xs text-white/50 hidden sm:inline">{user.email}</span>
+              <Link
+                href="/workspace"
+                className="px-4 py-2 rounded-lg bg-violet-600/20 hover:bg-violet-600/30 border border-violet-500/30 text-xs font-semibold text-violet-300 transition-all"
+              >
+                Workspace
+              </Link>
+              <button
+                onClick={handleLogout}
+                className="px-4 py-2 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-semibold text-white/80 transition-all"
+              >
+                Log Out
+              </button>
+            </>
+          ) : (
+            <>
+              <Link
+                href="/login"
+                className="px-4 py-2 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-semibold text-white/80 transition-all"
+              >
+                Sign In
+              </Link>
+              <Link
+                href="/login"
+                className="px-4 py-2 rounded-lg bg-gradient-to-r from-violet-600 to-cyan-600 hover:from-violet-500 hover:to-cyan-500 text-xs font-semibold text-white transition-all shadow-[0_0_15px_rgba(139,92,246,0.2)]"
+              >
+                Sign Up
+              </Link>
+            </>
+          )}
+        </div>
+      </header>
+
       {/* Animated background gradient */}
-      <div className="absolute inset-0 overflow-hidden">
+      <div className="absolute inset-0 overflow-hidden pointer-events-none">
         <div className="absolute -top-40 -right-40 w-96 h-96 bg-violet-600/20 rounded-full blur-3xl animate-pulse" />
         <div className="absolute -bottom-40 -left-40 w-96 h-96 bg-cyan-600/20 rounded-full blur-3xl animate-pulse" style={{ animationDelay: "1s" }} />
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-gradient-to-br from-violet-500/10 to-cyan-500/10 rounded-full blur-3xl" />
       </div>
 
       {/* Main content */}
-      <div className="relative z-10 flex flex-col items-center justify-center min-h-screen px-6 py-12">
+      <div className="relative z-10 flex-1 flex flex-col items-center justify-center px-6 py-12">
         {/* Logo/Brand */}
         <div className="mb-10 flex items-center gap-3">
           <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-violet-500 to-cyan-500 flex items-center justify-center text-lg font-black shadow-[0_0_32px_rgba(139,92,246,0.5)]">

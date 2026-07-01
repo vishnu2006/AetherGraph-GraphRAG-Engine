@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState, Suspense } from "react";
 import dynamic from "next/dynamic";
 import { useSearchParams, useRouter } from "next/navigation";
+import { createClient } from "@/utils/supabase/client";
 import OmniSearch, { ChatMessage as OmniChatMessage } from "@/components/OmniSearch";
 import SyllabusTracker from "@/components/SyllabusTracker";
 import GamificationWidget from "@/components/GamificationWidget";
@@ -106,10 +107,39 @@ function WorkspacePageContent() {
   // ── OmniSearch chat history state ──────────────────────────────────────────
   const [omniSearchHistory, setOmniSearchHistory] = useState<Record<string, OmniChatMessage[]>>({});
   const [copied, setCopied] = useState(false);
+  const [userEmail, setUserEmail] = useState<string | null>(null);
 
   const searchParams = useSearchParams();
   const router = useRouter();
   const joinCode = searchParams.get("join");
+  const supabase = createClient();
+
+  useEffect(() => {
+    const checkUser = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        router.push("/login");
+      } else {
+        setUserEmail(session.user.email ?? null);
+      }
+    };
+    checkUser();
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!session) {
+        router.push("/login");
+      } else {
+        setUserEmail(session.user.email ?? null);
+      }
+    });
+
+    return () => subscription.unsubscribe();
+  }, [router, supabase]);
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    router.push("/login");
+  };
 
   // ─────────────────────────────────────────────────────────────────────────
   // Data fetching
@@ -633,7 +663,7 @@ function WorkspacePageContent() {
         </button>
 
         {activeWorkspace && (
-          <div className="absolute top-4 left-16 right-48 z-30 flex items-center justify-between px-4 py-2.5 rounded-xl backdrop-blur-md border border-slate-800/80 bg-slate-950/75 shadow-lg shadow-black/40 shadow-violet-950/5"
+          <div className="absolute top-4 left-16 right-64 z-30 flex items-center justify-between px-4 py-2.5 rounded-xl backdrop-blur-md border border-slate-800/80 bg-slate-950/75 shadow-lg shadow-black/40 shadow-violet-950/5"
           >
             <div className="flex items-center gap-3 min-w-0">
               <h1 className="text-sm font-semibold text-white/90 truncate">{activeWorkspace.name}</h1>
@@ -659,6 +689,25 @@ function WorkspacePageContent() {
             </div>
           </div>
         )}
+
+        {/* Top Right Auth Menu */}
+        <div className="absolute top-4 right-4 z-30 flex items-center gap-3">
+          {userEmail && (
+            <div className="hidden md:flex flex-col items-end select-none">
+              <span className="text-[9px] text-white/30 font-medium uppercase tracking-wider">Logged in as</span>
+              <span className="text-[11px] text-white/60 font-semibold max-w-[120px] truncate" title={userEmail}>{userEmail}</span>
+            </div>
+          )}
+          <button
+            onClick={handleLogout}
+            className="px-3 py-1.5 rounded-xl bg-slate-900/80 hover:bg-slate-800 border border-slate-800 hover:border-slate-700/80 text-xs font-semibold text-white/80 transition-all flex items-center gap-1.5 shadow-lg shadow-black/40"
+          >
+            <svg className="w-3.5 h-3.5 text-white/45" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+            </svg>
+            Log Out
+          </button>
+        </div>
 
         {activeWorkspace ? (
           <Canvas

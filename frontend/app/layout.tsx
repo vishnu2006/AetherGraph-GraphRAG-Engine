@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
+import AuthInterceptor from "@/components/AuthInterceptor";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -23,7 +24,9 @@ export default function RootLayout({
   return (
     <html lang="en" className={inter.variable}>
       <body className="bg-[#0a0a0a] text-white antialiased overflow-hidden">
-        {children}
+        <AuthInterceptor>
+          {children}
+        </AuthInterceptor>
       </body>
     </html>
   );

@@ -39,6 +39,8 @@ load_dotenv(Path(__file__).resolve().parent / ".env")
 import string
 import time
 import uuid
+import jwt
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import List, Optional
@@ -88,9 +90,6 @@ SYNC_DATABASE_URL: str = os.getenv(
 GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "your-gemini-api-key-placeholder")
 GEMINI_EMBED_MODEL: str = "models/gemini-embedding-001"
 GEMINI_CHAT_MODEL: str = os.getenv("GEMINI_CHAT_MODEL", "gemini-2.5-flash")
-
-# Stub user ID — replaced by real auth when JWT/OAuth is implemented
-_DEFAULT_USER_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Gemini SDK initialisation
@@ -229,6 +228,45 @@ async def get_db():
         yield session
 
 
+SUPABASE_JWT_SECRET: str = os.getenv("SUPABASE_JWT_SECRET", "placeholder")
+security = HTTPBearer()
+
+async def get_current_user(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: AsyncSession = Depends(get_db)
+) -> uuid.UUID:
+    token = credentials.credentials
+    try:
+        payload = jwt.decode(token, SUPABASE_JWT_SECRET, algorithms=["HS256"], options={"verify_aud": False})
+        user_id_str = payload.get("sub")
+        email = payload.get("email", "unknown@example.com")
+        if not user_id_str:
+            raise HTTPException(status_code=401, detail="Invalid token")
+        
+        user_id = uuid.UUID(user_id_str)
+        
+        # Sync logic
+        result = await db.execute(select(User).where(User.id == user_id))
+        user = result.scalar_one_or_none()
+        if not user:
+            new_user = User(
+                id=user_id,
+                email=email,
+                username=email.split("@")[0],
+                hashed_password="oauth",
+                xp=0,
+                level=1,
+                streak_days=0
+            )
+            db.add(new_user)
+            await db.commit()
+
+        return user_id
+    except Exception as e:
+        print(f"Auth error: {e}")
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Pydantic schemas — Core
 # ─────────────────────────────────────────────────────────────────────────────
@@ -329,7 +367,6 @@ class GenerateExamRequest(BaseModel):
 
 
 class AwardXPRequest(BaseModel):
-    user_id: str = "00000000-0000-0000-0000-000000000001"
     xp_amount: int
     reason: str = "exam_completion"
 
@@ -675,7 +712,7 @@ def _ingest_file(file_content: bytes, filename: str, workspace_id: str, doc_id: 
 
 
 def _extract_calendar_events_bg(
-    file_content: bytes, filename: str, workspace_id: str
+    file_content: bytes, filename: str, workspace_id: str, user_id: uuid.UUID
 ) -> None:
     """Parse a document for date-bearing events and save them to the DB."""
     raw_text = _extract_text(file_content, filename)
@@ -723,7 +760,7 @@ def _extract_calendar_events_bg(
                 db.add(
                     CalendarEvent(
                         id=uuid.uuid4(),
-                        user_id=_DEFAULT_USER_ID,
+                        user_id=user_id,
                         room_id=uuid.UUID(workspace_id),
                         title=evt.title[:255],
                         due_date=due_dt,
@@ -749,6 +786,7 @@ async def pocket_dump(
     workspace_id: str = Form(...),
     files: List[UploadFile] = File(...),
     db: AsyncSession = Depends(get_db),
+    user_id: uuid.UUID = Depends(get_current_user),
 ):
     queued = []
     for upload in files:
@@ -774,7 +812,7 @@ async def pocket_dump(
         background_tasks.add_task(_ingest_file, raw_bytes, fname, workspace_id, str(doc_id))
         # Calendar event extraction (runs concurrently with ingestion)
         background_tasks.add_task(
-            _extract_calendar_events_bg, raw_bytes, fname, workspace_id
+            _extract_calendar_events_bg, raw_bytes, fname, workspace_id, user_id
         )
         queued.append(
             {"filename": fname, "size_bytes": len(raw_bytes), "status": "queued"}
@@ -1086,9 +1124,13 @@ async def generate_exam(
 
 
 @app.post("/api/award-xp", response_model=AwardXPResponse)
-async def award_xp(payload: AwardXPRequest, db: AsyncSession = Depends(get_db)):
+async def award_xp(
+    payload: AwardXPRequest, 
+    db: AsyncSession = Depends(get_db),
+    user_id: uuid.UUID = Depends(get_current_user)
+):
     result = await db.execute(
-        select(User).where(User.id == uuid.UUID(payload.user_id))
+        select(User).where(User.id == user_id)
     )
     user = result.scalar_one_or_none()
     if user is None:
@@ -1206,6 +1248,7 @@ async def create_calendar_event(
     room_code: str,
     payload: CalendarEventCreate,
     db: AsyncSession = Depends(get_db),
+    user_id: uuid.UUID = Depends(get_current_user),
 ):
     ws_result = await db.execute(
         select(WorkspaceRoom).where(WorkspaceRoom.access_code == room_code)
@@ -1226,7 +1269,7 @@ async def create_calendar_event(
 
     event = CalendarEvent(
         id=uuid.uuid4(),
-        user_id=_DEFAULT_USER_ID,
+        user_id=user_id,
         room_id=workspace.id,
         title=payload.title[:255],
         due_date=due_dt,
@@ -1472,15 +1515,17 @@ async def _ensure_default_user(db: AsyncSession) -> None:
 
 @app.post("/api/workspaces", response_model=WorkspaceOut, status_code=201)
 async def create_workspace(
-    payload: WorkspaceCreate, db: AsyncSession = Depends(get_db)
+    payload: WorkspaceCreate,
+    db: AsyncSession = Depends(get_db),
+    user_id: uuid.UUID = Depends(get_current_user)
 ):
-    await _ensure_default_user(db)
+    # await _ensure_default_user(db)
     workspace = WorkspaceRoom(
         id=uuid.uuid4(),
         name=payload.name,
         description=payload.description,
         access_code=_generate_access_code(),
-        owner_id=_DEFAULT_USER_ID,
+        owner_id=user_id,
     )
     db.add(workspace)
     await db.commit()
