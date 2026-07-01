@@ -3,6 +3,8 @@
  * Import { api } in any component instead of writing raw fetch() calls.
  */
 
+import { createClient } from "@/utils/supabase/client";
+
 const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 // ─── Shared types ─────────────────────────────────────────────────────────────
@@ -49,12 +51,23 @@ export type SearchResponse = {
 
 // ─── API helpers ──────────────────────────────────────────────────────────────
 
+async function getAuthHeader(): Promise<Record<string, string>> {
+  if (typeof window === "undefined") return {};
+  const supabase = createClient();
+  const { data: { session } } = await supabase.auth.getSession();
+  if (session?.access_token) {
+    return { Authorization: `Bearer ${session.access_token}` };
+  }
+  return {};
+}
+
 async function req<T>(
   path: string,
   init?: RequestInit
 ): Promise<T> {
+  const authHeader = await getAuthHeader();
   const res = await fetch(`${BASE}${path}`, {
-    headers: { "Content-Type": "application/json", ...init?.headers },
+    headers: { "Content-Type": "application/json", ...authHeader, ...init?.headers },
     ...init,
   });
   if (!res.ok) {
@@ -118,8 +131,10 @@ export const api = {
     const form = new FormData();
     form.append("workspace_id", workspaceId);
     files.forEach((f) => form.append("files", f));
+    const authHeader = await getAuthHeader();
     const res = await fetch(`${BASE}/api/upload`, {
       method: "POST",
+      headers: { ...authHeader },
       body: form,
     });
     if (!res.ok) throw new Error(`Upload failed: ${res.status}`);

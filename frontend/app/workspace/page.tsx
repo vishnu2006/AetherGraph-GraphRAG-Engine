@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState, Suspense } from "react";
 import dynamic from "next/dynamic";
 import { useSearchParams, useRouter } from "next/navigation";
+import { createClient } from "@/utils/supabase/client";
 import OmniSearch, { ChatMessage as OmniChatMessage } from "@/components/OmniSearch";
 import SyllabusTracker from "@/components/SyllabusTracker";
 import GamificationWidget from "@/components/GamificationWidget";
@@ -110,6 +111,25 @@ function WorkspacePageContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const joinCode = searchParams.get("join");
+  const supabase = createClient();
+
+  useEffect(() => {
+    const checkUser = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        router.push("/login");
+      }
+    };
+    checkUser();
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!session) {
+        router.push("/login");
+      }
+    });
+
+    return () => subscription.unsubscribe();
+  }, [router, supabase]);
 
   // ─────────────────────────────────────────────────────────────────────────
   // Data fetching
