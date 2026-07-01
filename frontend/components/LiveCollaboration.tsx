@@ -46,8 +46,8 @@ export default function LiveCollaboration({
 
   return (
     <>
-      {/* Status indicator (persistent top-right) */}
-      <div className="fixed top-4 right-4 z-40">
+      {/* Status indicator (persistent bottom-right) */}
+      <div className="fixed bottom-6 right-6 z-40">
         <button
           onClick={() => setIsOpen((x) => !x)}
           className="flex items-center gap-2 px-3 py-2 rounded-xl backdrop-blur-xl transition-all"
@@ -81,9 +81,9 @@ export default function LiveCollaboration({
         </button>
       </div>
 
-      {/* Chat panel (slide-out from top-right) */}
+      {/* Chat panel (slide-out from bottom-right) */}
       {isOpen && (
-        <div className="fixed top-16 right-4 z-40 w-80 rounded-2xl backdrop-blur-xl shadow-2xl flex flex-col max-h-[500px]"
+        <div className="fixed bottom-20 right-6 z-40 w-80 rounded-2xl backdrop-blur-xl shadow-2xl flex flex-col max-h-[500px]"
           style={{
             background: "rgba(10,10,10,0.95)",
             border: "1px solid rgba(255,255,255,0.1)",

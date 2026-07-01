@@ -31,6 +31,7 @@ export type BackendNode = {
   position_x: number;
   position_y: number;
   created_at: string;
+  document_id?: string;
 };
 
 export type BackendEdge = {
@@ -48,6 +49,7 @@ type ConceptNodeData = {
   content: string;
   unlocked: boolean;
   node_type: string;
+  document_id?: string;
   onUnlock: (id: string) => void;
   onFlashcard?: (id: string) => void;
 };
@@ -86,17 +88,39 @@ const TYPE_BADGE: Record<string, string> = {
   definition: "text-emerald-400/75 bg-emerald-500/10 border-emerald-500/20",
 };
 
+const DOC_COLORS = [
+  { border: "rgba(236,72,153,0.4)", glow: "rgba(236,72,153,0.22)", dot: "bg-pink-400", badge: "text-pink-400/75 bg-pink-500/10 border-pink-500/20" },
+  { border: "rgba(249,115,22,0.4)", glow: "rgba(249,115,22,0.22)", dot: "bg-orange-400", badge: "text-orange-400/75 bg-orange-500/10 border-orange-500/20" },
+  { border: "rgba(132,204,22,0.4)", glow: "rgba(132,204,22,0.22)", dot: "bg-lime-400", badge: "text-lime-400/75 bg-lime-500/10 border-lime-500/20" },
+  { border: "rgba(56,189,248,0.4)", glow: "rgba(56,189,248,0.22)", dot: "bg-sky-400", badge: "text-sky-400/75 bg-sky-500/10 border-sky-500/20" },
+  { border: "rgba(168,85,247,0.4)", glow: "rgba(168,85,247,0.22)", dot: "bg-purple-400", badge: "text-purple-400/75 bg-purple-500/10 border-purple-500/20" },
+];
+
+function getDocColors(docId?: string) {
+  if (!docId) return { border: TYPE_BORDER.document, glow: TYPE_GLOW.document, dot: TYPE_DOT.document, badge: TYPE_BADGE.document };
+  let hash = 0;
+  for (let i = 0; i < docId.length; i++) hash = docId.charCodeAt(i) + ((hash << 5) - hash);
+  return DOC_COLORS[Math.abs(hash) % DOC_COLORS.length];
+}
+
 // ─── Custom node component ────────────────────────────────────────────────────
 
 function ConceptNode({ id, data, selected }: NodeProps<ConceptNodeData>) {
   const [expanded, setExpanded] = useState(false);
 
-  const borderColor = data.unlocked
-    ? (TYPE_BORDER[data.node_type] ?? TYPE_BORDER.concept)
-    : "rgba(255, 255, 255, 0.12)";
-  const glowColor   = TYPE_GLOW[data.node_type]   ?? TYPE_GLOW.concept;
-  const dotClass    = TYPE_DOT[data.node_type]    ?? TYPE_DOT.concept;
-  const badgeClass  = TYPE_BADGE[data.node_type]  ?? TYPE_BADGE.concept;
+  let borderColor, glowColor, dotClass, badgeClass;
+  if (data.node_type === "document" && data.document_id) {
+    const docColor = getDocColors(data.document_id);
+    borderColor = data.unlocked ? docColor.border : "rgba(255, 255, 255, 0.12)";
+    glowColor = docColor.glow;
+    dotClass = docColor.dot;
+    badgeClass = docColor.badge;
+  } else {
+    borderColor = data.unlocked ? (TYPE_BORDER[data.node_type] ?? TYPE_BORDER.concept) : "rgba(255, 255, 255, 0.12)";
+    glowColor = TYPE_GLOW[data.node_type] ?? TYPE_GLOW.concept;
+    dotClass = TYPE_DOT[data.node_type] ?? TYPE_DOT.concept;
+    badgeClass = TYPE_BADGE[data.node_type] ?? TYPE_BADGE.concept;
+  }
 
   const shortContent =
     data.content.length > 130 ? data.content.slice(0, 130) + "…" : data.content;
@@ -282,6 +306,7 @@ export default function Canvas({
           content: n.content,
           unlocked: n.unlocked,
           node_type: n.node_type,
+          document_id: n.document_id,
           onUnlock: onNodeUnlock,
           onFlashcard: onNodeFlashcard ? () => onNodeFlashcard(n) : undefined,
         },

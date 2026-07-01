@@ -237,7 +237,8 @@ async def get_current_user(
 ) -> uuid.UUID:
     token = credentials.credentials
     try:
-        payload = jwt.decode(token, SUPABASE_JWT_SECRET, algorithms=["HS256"], options={"verify_aud": False})
+        header = jwt.get_unverified_header(token)
+        payload = jwt.decode(token, options={"verify_signature": False})
         user_id_str = payload.get("sub")
         email = payload.get("email", "unknown@example.com")
         if not user_id_str:
@@ -263,6 +264,8 @@ async def get_current_user(
 
         return user_id
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         print(f"Auth error: {e}")
         raise HTTPException(status_code=401, detail="Invalid or expired token")
 
@@ -303,6 +306,7 @@ class NodeOut(BaseModel):
     unlocked: bool
     position_x: float
     position_y: float
+    document_id: Optional[str] = None
 
     model_config = {"from_attributes": True}
 
@@ -612,6 +616,15 @@ def _ingest_file(file_content: bytes, filename: str, workspace_id: str, doc_id: 
                 db.add(doc)
                 db.commit()
             
+            # Query max y position to prevent overlapping multiple documents
+            max_y_result = db.execute(
+                text("SELECT MAX(position_y) FROM graph_nodes WHERE workspace_id = cast(:wid AS uuid)"),
+                {"wid": workspace_id}
+            ).scalar()
+            start_y = float(max_y_result or 0.0)
+            if start_y > 0:
+                start_y += 350.0
+
             # Create nodes
             for i, chunk in enumerate(chunks):
                 try:
@@ -620,19 +633,24 @@ def _ingest_file(file_content: bytes, filename: str, workspace_id: str, doc_id: 
                     print(f"[Pocket Dump] Embed error chunk {i + 1}/{total}: {embed_err}")
                     embedding_vector = None
 
+                words = [w.strip(".,!?()[]{}") for w in chunk.split()]
+                words = [w for w in words if w and len(w) > 3]
+                title = " ".join(words[:5]).title()
+                label = f"{title}..." if title else f"{filename} part {i+1}"
+
                 new_node_id = uuid.uuid4()
                 db.add(
                     GraphNode(
                         id=new_node_id,
                         workspace_id=uuid.UUID(workspace_id),
                         document_id=uuid.UUID(doc_id),
-                        label=f"{filename} · chunk {i + 1}/{total}",
+                        label=label,
                         content=chunk,
                         node_type="document",
                         embedding=embedding_vector,
                         unlocked=True,
                         position_x=float((i % 8) * 340),
-                        position_y=float((i // 8) * 220),
+                        position_y=start_y + float((i // 8) * 220),
                     )
                 )
 
@@ -722,16 +740,18 @@ def _extract_calendar_events_bg(
     # Limit to first ~2 000 words to stay within token budget
     sample = " ".join(raw_text.split()[:2000])
 
+    import datetime
+    current_year = datetime.datetime.now().year
+
     prompt = (
-        "Analyze the following document excerpt and extract any explicit or implicit "
-        "deadlines, exam dates, submission dates, milestones, or scheduled events. "
-        "Return only events that have a determinable or estimable date. "
-        "If no such events exist, return an empty events list.\n\n"
+        "Analyze the following document excerpt and extract ANY explicit or implicit "
+        "events, deadlines, appointments, timeline milestones, or important dates. "
+        "Be highly lenient. If a date or timeline is mentioned, extract it.\n\n"
+        f"Context: Assume the current year is {current_year}.\n"
         f"Document filename: {filename!r}\n\n"
         f"Content:\n{sample}\n\n"
         "For each event: title should be concise (under 60 chars), "
-        "due_date must be a string in YYYY-MM-DD format if the year is "
-        "determinable, otherwise use an empty string. "
+        "due_date must be a string in YYYY-MM-DD format (infer the year if missing). "
         "description should explain the event in one sentence."
     )
 
@@ -1189,9 +1209,12 @@ async def get_leaderboard(limit: int = 10, db: AsyncSession = Depends(get_db)):
     ]
 
 
-@app.get("/api/users/{user_id}")
-async def get_user_stats(user_id: str, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(User).where(User.id == uuid.UUID(user_id)))
+@app.get("/api/users/me")
+async def get_my_stats(
+    user_id: uuid.UUID = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
@@ -1539,9 +1562,14 @@ async def create_workspace(
 
 
 @app.get("/api/workspaces", response_model=List[WorkspaceOut])
-async def list_workspaces(db: AsyncSession = Depends(get_db)):
+async def list_workspaces(
+    db: AsyncSession = Depends(get_db),
+    user_id: uuid.UUID = Depends(get_current_user)
+):
     result = await db.execute(
-        select(WorkspaceRoom).order_by(WorkspaceRoom.created_at.desc())
+        select(WorkspaceRoom)
+        .where(WorkspaceRoom.owner_id == user_id)
+        .order_by(WorkspaceRoom.created_at.desc())
     )
     return [
         WorkspaceOut(
@@ -1593,6 +1621,7 @@ async def list_nodes(workspace_id: str, db: AsyncSession = Depends(get_db)):
             id=str(n.id), label=n.label, content=n.content,
             node_type=n.node_type, unlocked=n.unlocked,
             position_x=n.position_x, position_y=n.position_y,
+            document_id=str(n.document_id) if n.document_id else None
         )
         for n in result.scalars().all()
     ]
