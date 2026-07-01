@@ -632,6 +632,9 @@ def _ingest_file(file_content: bytes, filename: str, workspace_id: str, doc_id: 
             if start_y > 0:
                 start_y += 350.0
 
+            doc_offset_x = float(random.randint(-150, 150))
+            doc_offset_y = float(random.randint(-100, 100))
+
             actual_nodes = 0
             # Create nodes
             for i, chunk in enumerate(chunks):
@@ -647,29 +650,29 @@ def _ingest_file(file_content: bytes, filename: str, workspace_id: str, doc_id: 
                 label = f"{title}..." if title else f"{filename} part {i+1}"
 
                 is_duplicate = False
-                closest_node = None
+                closest_nodes = []
 
                 # Similarity check BEFORE creating node
                 if embedding_vector:
                     try:
                         vec_literal = "[" + ",".join(f"{v:.8f}" for v in embedding_vector) + "]"
-                        closest_node_row = db.execute(
+                        closest_nodes_rows = db.execute(
                             text("""
                                 SELECT id, label, content, 1 - (embedding <=> cast(:vec AS vector)) AS similarity
                                 FROM graph_nodes
                                 WHERE workspace_id = cast(:wid AS uuid)
                                   AND embedding IS NOT NULL
                                 ORDER BY embedding <=> cast(:vec AS vector)
-                                LIMIT 1
+                                LIMIT 2
                             """),
                             {
                                 "vec": vec_literal,
                                 "wid": workspace_id,
                             }
-                        ).first()
+                        ).fetchall()
 
-                        if closest_node_row:
-                            if closest_node_row.similarity > 0.92:
+                        if closest_nodes_rows:
+                            if closest_nodes_rows[0].similarity > 0.90:
                                 is_duplicate = True
                                 # Append provenance to existing node
                                 db.execute(
@@ -678,16 +681,40 @@ def _ingest_file(file_content: bytes, filename: str, workspace_id: str, doc_id: 
                                         SET content = content || '\n\n[Also appears in Document: ' || :doc_id || ']'
                                         WHERE id = :nid
                                     """),
-                                    {"doc_id": filename, "nid": closest_node_row.id}
+                                    {"doc_id": filename, "nid": closest_nodes_rows[0].id}
                                 )
-                                print(f"[Pocket Dump] Skipped chunk (duplicate similarity {closest_node_row.similarity:.4f}). Appended to {closest_node_row.id}")
-                            elif closest_node_row.similarity > 0.82:
-                                closest_node = closest_node_row
+                                print(f"[Pocket Dump] Skipped chunk (duplicate similarity {closest_nodes_rows[0].similarity:.4f}). Appended to {closest_nodes_rows[0].id}")
+                            else:
+                                for row in closest_nodes_rows:
+                                    if row.similarity > 0.75:
+                                        closest_nodes.append(row)
                     except Exception as sim_err:
                         print(f"[Pocket Dump] Similarity check failed: {sim_err}")
 
                 if not is_duplicate:
                     new_node_id = uuid.uuid4()
+                    
+                    # Compute spatial layout relative to neighbor
+                    if closest_nodes:
+                        parent_row = db.execute(
+                            text("SELECT position_x, position_y FROM graph_nodes WHERE id = :nid"),
+                            {"nid": closest_nodes[0].id}
+                        ).first()
+                        if parent_row:
+                            base_x = parent_row.position_x
+                            base_y = parent_row.position_y
+                        else:
+                            base_x = float((i % 8) * 340) + doc_offset_x
+                            base_y = start_y + float((i // 8) * 220) + doc_offset_y
+                            
+                        dx = random.uniform(200, 350) * random.choice([1, -1])
+                        dy = random.uniform(100, 250) * random.choice([1, -1])
+                        final_x = base_x + dx
+                        final_y = base_y + dy
+                    else:
+                        final_x = float((i % 8) * 340) + doc_offset_x
+                        final_y = start_y + float((i // 8) * 220) + doc_offset_y
+
                     db.add(
                         GraphNode(
                             id=new_node_id,
@@ -698,25 +725,25 @@ def _ingest_file(file_content: bytes, filename: str, workspace_id: str, doc_id: 
                             node_type="document",
                             embedding=embedding_vector,
                             unlocked=True,
-                            position_x=float((i % 8) * 340),
-                            position_y=start_y + float((i // 8) * 220),
+                            position_x=final_x,
+                            position_y=final_y,
                         )
                     )
                     actual_nodes += 1
 
-                    if closest_node:
+                    for c_node in closest_nodes:
                         # Create cross-document connection edge
                         db.add(
                             GraphEdge(
                                 id=uuid.uuid4(),
                                 workspace_id=uuid.UUID(workspace_id),
-                                source_node_id=uuid.UUID(str(closest_node.id)),
+                                source_node_id=uuid.UUID(str(c_node.id)),
                                 target_node_id=new_node_id,
                                 relationship_label="Highly Related",
-                                weight=float(closest_node.similarity)
+                                weight=float(c_node.similarity)
                             )
                         )
-                        print(f"[Pocket Dump] Linked node {new_node_id} to existing node {closest_node.id} (similarity: {closest_node.similarity:.4f})")
+                        print(f"[Pocket Dump] Linked node {new_node_id} to existing node {c_node.id} (similarity: {c_node.similarity:.4f})")
 
                 time.sleep(0.12)   # respect 1,500 RPM free-tier ceiling
 

@@ -96,7 +96,7 @@ function ConceptNode({ id, data, selected }: NodeProps<ConceptNodeData>) {
   const [expanded, setExpanded] = useState(false);
 
   let borderColor, glowColor, dotClass, badgeClass;
-  if (data.node_type === "document" && data.color) {
+  if (data.color) {
     // If backend provided a hex color, derive tailwind classes
     // We'll use the raw hex for borders/glow, and generic tailwind for badges since we can't do arbitrary tailwind bg colors dynamically without style={}, but we can just use inline styles.
     borderColor = data.unlocked ? data.color : "rgba(255, 255, 255, 0.12)";
@@ -315,38 +315,56 @@ export default function Canvas({
     [backendNodes, onNodeUnlock, onNodeFlashcard]
   );
 
+  const [nodes, setNodes, onNodesChange] = useNodesState(rfNodes);
+  
+  const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
+  const onNodeMouseEnter = useCallback((_: React.MouseEvent, node: Node) => setHoveredNodeId(node.id), []);
+  const onNodeMouseLeave = useCallback(() => setHoveredNodeId(null), []);
+  const selectedNodeIds = useMemo(() => new Set(nodes.filter((n) => n.selected).map((n) => n.id)), [nodes]);
+
   // Convert backend edges → ReactFlow edges
   const rfEdges = useMemo<Edge[]>(
     () =>
-      backendEdges.map((e) => ({
-        id: e.id,
-        source: e.source,
-        target: e.target,
-        type: "smoothstep",
-        animated: true,
-        label: e.label,
-        style: {
-          stroke: "rgba(139,92,246,0.3)",
-          strokeWidth: Math.max(1, (e.weight ?? 1) * 1.5),
-        },
-        markerEnd: {
-          type: MarkerType.ArrowClosed,
-          color: "rgba(139,92,246,0.5)",
-          width: 14,
-          height: 14,
-        },
-        labelStyle: { fill: "rgba(255,255,255,0.28)", fontSize: 10 },
-        labelBgStyle: {
-          fill: "rgba(10,10,10,0.85)",
-          stroke: "rgba(139,92,246,0.2)",
-          strokeWidth: 1,
-          rx: 4,
-        },
-      })),
-    [backendEdges]
+      backendEdges.map((e) => {
+        const isActive =
+          hoveredNodeId === e.source ||
+          hoveredNodeId === e.target ||
+          selectedNodeIds.has(e.source) ||
+          selectedNodeIds.has(e.target);
+          
+        const strokeColor = isActive ? "rgba(139,92,246,0.6)" : "rgba(30,41,59,0.6)";
+        
+        return {
+          id: e.id,
+          source: e.source,
+          target: e.target,
+          type: "smoothstep",
+          animated: isActive,
+          label: e.label,
+          style: {
+            stroke: strokeColor,
+            strokeWidth: Math.max(1, (e.weight ?? 1) * (isActive ? 2.5 : 1)),
+            transition: "stroke 0.3s ease, stroke-width 0.3s ease",
+          },
+          markerEnd: {
+            type: MarkerType.ArrowClosed,
+            color: strokeColor,
+            width: isActive ? 16 : 14,
+            height: isActive ? 16 : 14,
+          },
+          labelStyle: { fill: isActive ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.05)", fontSize: 10, transition: "fill 0.3s ease" },
+          labelBgStyle: {
+            fill: "rgba(10,10,10,0.85)",
+            stroke: isActive ? "rgba(139,92,246,0.3)" : "rgba(30,41,59,0.3)",
+            strokeWidth: 1,
+            rx: 4,
+            transition: "stroke 0.3s ease",
+          },
+        };
+      }),
+    [backendEdges, hoveredNodeId, selectedNodeIds]
   );
 
-  const [nodes, setNodes, onNodesChange] = useNodesState(rfNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(rfEdges);
 
   // Keep ReactFlow state in sync when parent data changes
@@ -453,6 +471,8 @@ export default function Canvas({
         onConnect={onConnect}
         onNodeDragStop={onNodeDragStop}
         onNodesDelete={onNodesDelete}
+        onNodeMouseEnter={onNodeMouseEnter}
+        onNodeMouseLeave={onNodeMouseLeave}
         nodeTypes={nodeTypes}
         fitView
         fitViewOptions={{ padding: 0.35, minZoom: 0.3 }}
