@@ -96,7 +96,7 @@ export default function GamificationWidget({
   }, [fetchAll, refreshKey]);
 
   const progressPct = me ? Math.round((me.xp_in_level / 1000) * 100) : 0;
-  const myRank = leaderboard.findIndex((u) => u.user_id === DEFAULT_USER_ID) + 1;
+  const myRank = me ? leaderboard.findIndex((u) => u.user_id === me.id) + 1 : 0;
 
   // ── Loading skeleton ───────────────────────────────────────────────────────
   if (loading) {
@@ -223,7 +223,7 @@ export default function GamificationWidget({
           {showBoard && (
             <div className="space-y-1">
               {leaderboard.map((entry) => {
-                const isMe = entry.user_id === DEFAULT_USER_ID;
+                const isMe = me ? entry.user_id === me.id : false;
                 const rankColor = RANK_COLORS[entry.rank] ?? "text-white/18";
                 const rankGlow = RANK_GLOWS[entry.rank];
                 const entryPct = Math.round((entry.xp_in_level / 1000) * 100);
@@ -234,12 +234,12 @@ export default function GamificationWidget({
                     className={`flex items-center gap-2 px-2.5 py-2 rounded-xl
                                transition-all duration-150 ${
                                  isMe
-                                   ? "border border-amber-500/20"
+                                   ? "bg-blue-900/50 border border-blue-400"
                                    : "border border-transparent"
                                }`}
                     style={
                       isMe
-                        ? { background: "rgba(251,191,36,0.06)" }
+                        ? {} // Removed inline background to let tailwind take over
                         : { background: "rgba(255,255,255,0.02)" }
                     }
                   >

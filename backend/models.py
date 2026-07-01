@@ -304,6 +304,7 @@ class UploadedDocument(Base):
     file_type = Column(String(50), nullable=False)  # e.g., "pdf", "txt", "md"
     status = Column(String(50), nullable=False, default="processing")  # "processing" | "completed" | "failed"
     node_count = Column(Integer, nullable=False, default=0)  # Number of nodes created from this document
+    color = Column(String(50), nullable=True)  # File-based color provenance
     uploaded_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     workspace = relationship("WorkspaceRoom", lazy="selectin")

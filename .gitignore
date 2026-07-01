@@ -18,3 +18,9 @@ tsconfig.tsbuildinfo
 .gemini/
 .idea/
 .vscode/
+
+# GitHub CLI and logs
+gh.zip
+gh_cli/
+dummy.txt
+dummy_automation_log.txt

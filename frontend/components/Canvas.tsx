@@ -32,6 +32,7 @@ export type BackendNode = {
   position_y: number;
   created_at: string;
   document_id?: string;
+  color?: string;
 };
 
 export type BackendEdge = {
@@ -50,6 +51,7 @@ type ConceptNodeData = {
   unlocked: boolean;
   node_type: string;
   document_id?: string;
+  color?: string;
   onUnlock: (id: string) => void;
   onFlashcard?: (id: string) => void;
 };
@@ -85,36 +87,19 @@ const TYPE_BADGE: Record<string, string> = {
   document:   "text-cyan-400/75 bg-cyan-500/10 border-cyan-500/20",
   summary:    "text-blue-400/75 bg-blue-500/10 border-blue-500/20",
   question:   "text-amber-400/75 bg-amber-500/10 border-amber-500/20",
-  definition: "text-emerald-400/75 bg-emerald-500/10 border-emerald-500/20",
-};
-
-const DOC_COLORS = [
-  { border: "rgba(236,72,153,0.4)", glow: "rgba(236,72,153,0.22)", dot: "bg-pink-400", badge: "text-pink-400/75 bg-pink-500/10 border-pink-500/20" },
-  { border: "rgba(249,115,22,0.4)", glow: "rgba(249,115,22,0.22)", dot: "bg-orange-400", badge: "text-orange-400/75 bg-orange-500/10 border-orange-500/20" },
-  { border: "rgba(132,204,22,0.4)", glow: "rgba(132,204,22,0.22)", dot: "bg-lime-400", badge: "text-lime-400/75 bg-lime-500/10 border-lime-500/20" },
-  { border: "rgba(56,189,248,0.4)", glow: "rgba(56,189,248,0.22)", dot: "bg-sky-400", badge: "text-sky-400/75 bg-sky-500/10 border-sky-500/20" },
-  { border: "rgba(168,85,247,0.4)", glow: "rgba(168,85,247,0.22)", dot: "bg-purple-400", badge: "text-purple-400/75 bg-purple-500/10 border-purple-500/20" },
-];
-
-function getDocColors(docId?: string) {
-  if (!docId) return { border: TYPE_BORDER.document, glow: TYPE_GLOW.document, dot: TYPE_DOT.document, badge: TYPE_BADGE.document };
-  let hash = 0;
-  for (let i = 0; i < docId.length; i++) hash = docId.charCodeAt(i) + ((hash << 5) - hash);
-  return DOC_COLORS[Math.abs(hash) % DOC_COLORS.length];
-}
-
 // ─── Custom node component ────────────────────────────────────────────────────
 
 function ConceptNode({ id, data, selected }: NodeProps<ConceptNodeData>) {
   const [expanded, setExpanded] = useState(false);
 
   let borderColor, glowColor, dotClass, badgeClass;
-  if (data.node_type === "document" && data.document_id) {
-    const docColor = getDocColors(data.document_id);
-    borderColor = data.unlocked ? docColor.border : "rgba(255, 255, 255, 0.12)";
-    glowColor = docColor.glow;
-    dotClass = docColor.dot;
-    badgeClass = docColor.badge;
+  if (data.node_type === "document" && data.color) {
+    // If backend provided a hex color, derive tailwind classes
+    // We'll use the raw hex for borders/glow, and generic tailwind for badges since we can't do arbitrary tailwind bg colors dynamically without style={}, but we can just use inline styles.
+    borderColor = data.unlocked ? data.color : "rgba(255, 255, 255, 0.12)";
+    glowColor = data.color + "38"; // add 22% opacity hex
+    dotClass = "bg-current"; // text color controls this
+    badgeClass = "bg-slate-500/10 border-slate-500/20"; // generic
   } else {
     borderColor = data.unlocked ? (TYPE_BORDER[data.node_type] ?? TYPE_BORDER.concept) : "rgba(255, 255, 255, 0.12)";
     glowColor = TYPE_GLOW[data.node_type] ?? TYPE_GLOW.concept;
@@ -166,8 +151,8 @@ function ConceptNode({ id, data, selected }: NodeProps<ConceptNodeData>) {
               }`}
               style={
                 data.unlocked
-                  ? { boxShadow: `0 0 8px ${borderColor}` }
-                  : undefined
+                  ? { boxShadow: `0 0 8px ${borderColor}`, ...(data.node_type === "document" && data.color ? { backgroundColor: data.color } : {}) }
+                  : (data.node_type === "document" && data.color ? { backgroundColor: data.color } : {})
               }
             />
             <span className="text-sm font-bold text-slate-100 truncate leading-tight">
@@ -296,21 +281,34 @@ export default function Canvas({
 }: CanvasProps) {
   // Convert backend nodes → ReactFlow nodes
   const rfNodes = useMemo<Node<ConceptNodeData>[]>(
-    () =>
-      backendNodes.map((n) => ({
-        id: n.id,
-        type: "conceptNode",
-        position: { x: n.position_x, y: n.position_y },
-        data: {
-          label: n.label,
-          content: n.content,
-          unlocked: n.unlocked,
-          node_type: n.node_type,
-          document_id: n.document_id,
-          onUnlock: onNodeUnlock,
-          onFlashcard: onNodeFlashcard ? () => onNodeFlashcard(n) : undefined,
-        },
-      })),
+    () => {
+      const positionCounts: Record<string, number> = {};
+      return backendNodes.map((n, idx) => {
+        const key = `${Math.round(n.position_x)},${Math.round(n.position_y)}`;
+        const overlapCount = positionCounts[key] || 0;
+        positionCounts[key] = overlapCount + 1;
+
+        const jitterX = overlapCount * 25;
+        const jitterY = overlapCount * 25;
+
+        return {
+          id: n.id,
+          type: "conceptNode",
+          position: { x: n.position_x + jitterX, y: n.position_y + jitterY },
+          zIndex: 1000 + idx,
+          data: {
+            label: n.label,
+            content: n.content,
+            unlocked: n.unlocked,
+            node_type: n.node_type,
+            document_id: n.document_id,
+            color: n.color,
+            onUnlock: onNodeUnlock,
+            onFlashcard: onNodeFlashcard ? () => onNodeFlashcard(n) : undefined,
+          },
+        };
+      });
+    },
     [backendNodes, onNodeUnlock, onNodeFlashcard]
   );
 
